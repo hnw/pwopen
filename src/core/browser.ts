@@ -210,9 +210,8 @@ export async function openUrls(urls: string[], options: RuntimeOptions): Promise
       const page = await context.newPage();
       try {
         await navigateWithRetries(page, url);
-        await waitForRenderSettled(page);
-
         if (options.screenshot) {
+          await waitForRenderSettled(page);
           const screenshot = await page.screenshot({
             type: 'png',
             fullPage: options.fullPage,
@@ -225,7 +224,11 @@ export async function openUrls(urls: string[], options: RuntimeOptions): Promise
         console.warn(`[WARN] Failed to open ${url}: ${message}`);
         failedCount += 1;
       } finally {
-        await page.close();
+        try {
+          await page.close();
+        } catch (error) {
+          console.warn(`[WARN] Failed to close page: ${String(error)}`);
+        }
       }
     }
   } finally {

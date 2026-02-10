@@ -6,4 +6,4 @@ services:
     init: true
     security_opt:
       - seccomp:./seccomp_profile.json
-    tty: true
+    stdin_open: true
