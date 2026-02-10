@@ -1,13 +1,13 @@
 # pwopen
 
-pwopen is a Playwright-based CLI tool that opens URLs and provides page screenshots directly in your terminal using Sixel graphics.
+pwopen is a Playwright-based CLI tool that opens URLs and can render page screenshots directly in your terminal using Sixel graphics.
 
 It allows for headless browsing, taking screenshots, and verifying page rendering without leaving your command line interface.
 
 ## Features
 
 - Playwright Automation: Robust browser control using Chromium.
-- Screenshots with Sixel: View page screenshots directly in Sixel-supported terminals (e.g., iTerm2, WezTerm, foot).
+- Screenshots with Sixel: Optional Sixel screenshots in supported terminals (e.g., iTerm2, WezTerm, foot).
 - Secure: Designed to run with a custom seccomp profile for enhanced security in Docker.
 - Configurable: Supports headed mode, sandbox options, and various runtime flags.
 
@@ -23,7 +23,7 @@ You can run `pwopen` directly from the GitHub Container Registry.
 Command:
 
 ```bash
-# Basic usage (Print HTML/Title or check connectivity)
+# Basic usage (open URLs; no screenshot output)
 docker run --rm -it --init --ipc=host \
   --security-opt seccomp=./seccomp_profile.json \
   ghcr.io/hnw/pwopen:latest https://example.com
@@ -32,6 +32,11 @@ docker run --rm -it --init --ipc=host \
 docker run --rm -it --init --ipc=host \
   --security-opt seccomp=./seccomp_profile.json \
   ghcr.io/hnw/pwopen:latest --screenshot https://example.com
+
+# Read URLs from stdin (extracts http/https from text)
+printf 'https://example.com\n' | docker run --rm -i --init --ipc=host \
+  --security-opt seccomp=./seccomp_profile.json \
+  ghcr.io/hnw/pwopen:latest
 
 ```
 
@@ -44,6 +49,9 @@ Requirements: Node.js 18+
 ```bash
 # Install dependencies
 npm ci
+
+# Install Playwright browsers (if not already installed)
+npx playwright install
 
 # Build the project
 npm run build
@@ -63,6 +71,19 @@ node ./dist/main.js --screenshot https://google.com
 | `--sandbox`    | Enable Chromium sandbox (default: true)    |
 | `--no-sandbox` | Disable Chromium sandbox                   |
 | `-h, --help`   | display help for command                   |
+
+## Environment Variables
+
+pwopen reads configuration from environment variables.
+
+| Variable                    | Description                         | Default   |
+| --------------------------- | ----------------------------------- | --------- |
+| `PWOPEN_TIMEOUT_MS`         | Navigation timeout in milliseconds  | `15000`   |
+| `PWOPEN_VIEWPORT_WIDTH`     | Viewport width                      | `1280`    |
+| `PWOPEN_VIEWPORT_HEIGHT`    | Viewport height                     | `720`     |
+| `PWOPEN_USER_AGENT`         | Custom User-Agent string            | _(unset)_ |
+| `PWOPEN_NAVIGATION_RETRIES` | Retry count for navigation failures | `0`       |
+| `PWOPEN_RENDER_WAIT_MS`     | Extra wait after render settle      | `200`     |
 
 ## License
 

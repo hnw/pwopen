@@ -37,12 +37,15 @@ async function run(): Promise<void> {
     return;
   }
 
-  await openUrls(urls, {
+  const failedCount = await openUrls(urls, {
     headed: Boolean(options.headed),
     screenshot: Boolean(options.screenshot),
     fullPage: Boolean(options.fullPage),
     sandbox: Boolean(options.sandbox),
   });
+  if (failedCount > 0) {
+    process.exitCode = 1;
+  }
 }
 
 void (async () => {

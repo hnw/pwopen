@@ -1,6 +1,9 @@
 services:
   pwopen:
     image: ghcr.io/hnw/pwopen:latest
+    profiles:
+      - manual
+    init: true
     security_opt:
       - seccomp:./seccomp_profile.json
     tty: true

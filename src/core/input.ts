@@ -41,7 +41,7 @@ export async function collectInputs(args: string[]): Promise<string[]> {
     inputs.push(...args);
   }
 
-  const shouldReadStdin = !process.stdin.isTTY || args.length === 0;
+  const shouldReadStdin = args.length === 0;
   if (shouldReadStdin) {
     const stdinText = await readStdinText();
     const extracted = extractUrls(stdinText);

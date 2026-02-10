@@ -116,16 +116,17 @@ async function waitForRenderSettled(page: Page): Promise<void> {
   }
 }
 
-export async function openUrls(urls: string[], options: RuntimeOptions): Promise<void> {
+export async function openUrls(urls: string[], options: RuntimeOptions): Promise<number> {
   if (urls.length === 0) {
     console.warn('[WARN] No valid URLs to open.');
-    return;
+    return 0;
   }
 
   let browser: Browser | null = null;
   let context: BrowserContext | null = null;
   let closing = false;
   let exitRequested = false;
+  let failedCount = 0;
 
   const closeResources = async (reason?: string): Promise<void> => {
     if (closing) {
@@ -222,6 +223,7 @@ export async function openUrls(urls: string[], options: RuntimeOptions): Promise
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         console.warn(`[WARN] Failed to open ${url}: ${message}`);
+        failedCount += 1;
       } finally {
         await page.close();
       }
@@ -230,4 +232,6 @@ export async function openUrls(urls: string[], options: RuntimeOptions): Promise
     unregisterSignalHandlers();
     await closeResources();
   }
+
+  return failedCount;
 }
