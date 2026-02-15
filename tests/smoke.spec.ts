@@ -49,7 +49,7 @@ test('pwopen opens a URL passed as an argument', async () => {
     res.end('<html><body>ok</body></html>');
   });
 
-  await new Promise<void>((resolve) => server.listen(0, resolve));
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   const address = server.address() as AddressInfo;
   const url = `http://127.0.0.1:${address.port}`;
 
@@ -68,7 +68,7 @@ test('pwopen reads URLs from stdin when no args are provided', async () => {
     res.end('<html><body>stdin</body></html>');
   });
 
-  await new Promise<void>((resolve) => server.listen(0, resolve));
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   const address = server.address() as AddressInfo;
   const url = `http://127.0.0.1:${address.port}`;
 

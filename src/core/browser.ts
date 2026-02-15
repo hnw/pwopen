@@ -198,10 +198,6 @@ export async function openUrls(urls: string[], options: RuntimeOptions): Promise
       userAgent: config.userAgent,
     });
 
-    if (!context) {
-      throw new Error('Browser context not initialized.');
-    }
-
     for (const url of urls) {
       if (exitRequested) {
         break;

@@ -11,18 +11,27 @@ function isHttpUrl(value: string): boolean {
   }
 }
 
+const MAX_STDIN_SIZE_BYTES = 10 * 1024 * 1024; // 10MB
+
 async function readStdinText(): Promise<string> {
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     let data = '';
+    let totalBytes = 0;
     process.stdin.setEncoding('utf8');
     process.stdin.on('data', (chunk) => {
+      totalBytes += Buffer.byteLength(chunk, 'utf8');
+      if (totalBytes > MAX_STDIN_SIZE_BYTES) {
+        process.stdin.pause();
+        reject(new Error(`stdin input exceeds maximum size of ${MAX_STDIN_SIZE_BYTES} bytes`));
+        return;
+      }
       data += chunk;
     });
     process.stdin.on('end', () => {
       resolve(data);
     });
-    process.stdin.on('error', () => {
-      resolve('');
+    process.stdin.on('error', (err) => {
+      reject(err);
     });
     process.stdin.resume();
   });
@@ -55,9 +64,14 @@ export async function collectInputs(args: string[]): Promise<string[]> {
     if (process.stdin.isTTY) {
       return inputs;
     }
-    const stdinText = await readStdinText();
-    const extracted = extractUrls(stdinText);
-    inputs.push(...extracted);
+    try {
+      const stdinText = await readStdinText();
+      const extracted = extractUrls(stdinText);
+      inputs.push(...extracted);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(`[WARN] Failed to read stdin: ${message}`);
+    }
   }
 
   return inputs;

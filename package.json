@@ -1,6 +1,7 @@
 {
   "name": "pwopen",
   "version": "0.1.0",
+  "type": "module",
   "description": "Playwright-based URL opener",
   "bin": {
     "pwopen": "dist/main.js"
@@ -13,7 +14,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "lint": "eslint . --ext .ts",
+    "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "test": "npm run build && playwright test",
