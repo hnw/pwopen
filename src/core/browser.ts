@@ -1,8 +1,8 @@
 import { type Browser, type BrowserContext, chromium, type Frame, type Page } from 'playwright';
 
-import type { RuntimeOptions } from '../types';
-import { config } from './config';
-import { renderSixel } from './sixel';
+import type { RuntimeOptions } from '../types.js';
+import { config } from './config.js';
+import { renderSixel } from './sixel.js';
 
 async function navigateWithRetries(page: Page, url: string): Promise<void> {
   const maxAttempts = Math.max(0, config.navigationRetries);
