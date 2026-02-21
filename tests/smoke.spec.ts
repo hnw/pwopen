@@ -2,9 +2,9 @@ import { expect, test } from '@playwright/test';
 import { spawn } from 'child_process';
 import { createServer } from 'http';
 import type { AddressInfo } from 'net';
-import path from 'path';
+import { fileURLToPath } from 'url';
 
-const distMain = path.resolve(__dirname, '../dist/main.js');
+const distMain = fileURLToPath(new URL('../dist/main.js', import.meta.url));
 
 function runPwopen(
   args: string[],
@@ -53,7 +53,7 @@ test('pwopen opens a URL passed as an argument', async () => {
   const address = server.address() as AddressInfo;
   const url = `http://127.0.0.1:${address.port}`;
 
-  const result = await runPwopen([url]);
+  const result = await runPwopen(['--no-sandbox', url]);
 
   server.close();
 
@@ -72,7 +72,7 @@ test('pwopen reads URLs from stdin when no args are provided', async () => {
   const address = server.address() as AddressInfo;
   const url = `http://127.0.0.1:${address.port}`;
 
-  const result = await runPwopen([], `${url}\n`);
+  const result = await runPwopen(['--no-sandbox'], `${url}\n`);
 
   server.close();
 

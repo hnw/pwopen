@@ -2,9 +2,9 @@
 
 import { Command } from 'commander';
 
-import { openUrls } from './core/browser';
-import { config } from './core/config';
-import { collectInputs, validateUrls } from './core/input';
+import { openUrls } from './core/browser.js';
+import { config } from './core/config.js';
+import { collectInputs, validateUrls } from './core/input.js';
 
 const program = new Command();
 
