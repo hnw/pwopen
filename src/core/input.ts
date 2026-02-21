@@ -38,7 +38,7 @@ async function readStdinText(): Promise<string> {
 }
 
 function extractUrls(text: string): string[] {
-  const matches = text.matchAll(/https?:\/\/[^\s<>"']+/g);
+  const matches = text.matchAll(/https?:\/\/[a-z0-9\-._~:\/?#\[\]@!$&'()*+,;=%]+/gi);
   const results: string[] = [];
 
   for (const match of matches) {
