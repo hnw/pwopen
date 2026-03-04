@@ -2,16 +2,22 @@
 
 pwopen is a Playwright-based CLI tool that opens URLs and can render page screenshots directly in your terminal using Sixel graphics.
 
-It allows for headless browsing, taking screenshots, and verifying page rendering without leaving your command line interface.
+It allows you to perform headless browsing, take screenshots, and verify page rendering without leaving your command line interface.
 
 ![](./docs/screenshot.gif)
 
 ## Features
 
 - Playwright Automation: Robust browser control using Chromium.
-- Screenshots with Sixel: Optional Sixel screenshots in supported terminals (e.g., iTerm2, WezTerm, foot). Requires `sharp` and `sixel`.
-- Secure: Chromium sandbox is enabled by default; in Docker you can keep it on with the provided seccomp profile.
+- Screenshots with Sixel: Optional Sixel screenshots in supported terminals. Requires `sharp` and `sixel`.
+- Secure by Default: The Chromium sandbox is enabled by default. When running in Docker, you can maintain this security using the provided seccomp profile.
 - Configurable: Supports headed mode, sandbox options, and various runtime flags.
+- Graceful Error Handling: Safely skips non-HTTP/HTTPS URLs and continues execution even if Sixel rendering fails.
+
+## Prerequisites
+
+- For Sixel screenshots: A Sixel-capable terminal (e.g., iTerm2, WezTerm, foot). Note that a TTY is not strictly required as the output is written to stdout.
+- For Local Installation: Node.js 18 or later.
 
 ## Usage
 
@@ -19,17 +25,17 @@ It allows for headless browsing, taking screenshots, and verifying page renderin
 
 You can run `pwopen` directly from the GitHub Container Registry.
 
-> Note: Sixel output is written to stdout. It will render in Sixel-capable terminals; a TTY is not required.
-> For security, it is recommended to use the provided `seccomp_profile.json`.
+> Note: For security, it is highly recommended to use the provided `seccomp_profile.json` to keep the Chromium sandbox enabled inside the container.
 
 Download the seccomp profile first:
 
 ```bash
 curl -L -o seccomp_profile.json \
   https://raw.githubusercontent.com/hnw/pwopen/main/seccomp_profile.json
+
 ```
 
-Command:
+Commands:
 
 ```bash
 # Basic usage (open URLs; no screenshot output)
@@ -49,18 +55,17 @@ printf 'https://example.com\n' | docker run --rm -i --init --ipc=host \
 
 ```
 
-_If you cannot use the seccomp profile, you may need to use `--cap-add=SYS_ADMIN` (less secure) or `--security-opt seccomp=unconfined` to allow Chrome to run. As a last resort, you can pass `--no-sandbox` (security trade-off)._
+> Note: Standard input accepts a maximum of 10MB of text.
+> Troubleshooting: If you cannot use the seccomp profile, you may need to use `--cap-add=SYS_ADMIN` (less secure) or `--security-opt seccomp=unconfined` to allow Chrome to run. As a last resort, you can pass the `--no-sandbox` flag to the tool (security trade-off).
 
 ### Local Installation
-
-Requirements: Node.js 18+
 
 ```bash
 # Install dependencies
 npm ci
 
-# Install Playwright browsers (if not already installed)
-npx playwright install
+# Install Playwright browsers (and system dependencies)
+npx playwright install --with-deps chromium
 
 # Build the project
 npm run build
@@ -96,4 +101,4 @@ pwopen reads configuration from environment variables.
 
 ## License
 
-MIT
+MIT License
