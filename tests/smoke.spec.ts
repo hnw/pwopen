@@ -14,6 +14,7 @@ function runPwopen(
     const child = spawn(process.execPath, [distMain, ...args], {
       env: {
         ...process.env,
+        OTEL_EXPORTER_OTLP_ENDPOINT: '',
         PWOPEN_TIMEOUT_MS: '5000',
         PWOPEN_NAVIGATION_RETRIES: '0',
         PWOPEN_RENDER_WAIT_MS: '0',

@@ -1,8 +1,15 @@
+import { type Span, trace, type Tracer } from '@opentelemetry/api';
 import { type Browser, type BrowserContext, chromium, type Frame, type Page } from 'playwright';
 
 import type { RuntimeOptions } from '../types.js';
 import { config } from './config.js';
 import { renderSixel } from './sixel.js';
+import { withSpan } from './telemetry.js';
+
+const setUrlAttributes = (span: Span, url: string): void => {
+  span.setAttribute('url.full', url);
+  span.setAttribute('pwopen.url.full', url);
+};
 
 async function navigateWithRetries(page: Page, url: string): Promise<void> {
   const maxAttempts = Math.max(0, config.navigationRetries);
@@ -116,12 +123,17 @@ async function waitForRenderSettled(page: Page): Promise<void> {
   }
 }
 
-export async function openUrls(urls: string[], options: RuntimeOptions): Promise<number> {
+export async function openUrls(
+  urls: string[],
+  options: RuntimeOptions,
+  tracerOverride?: Tracer,
+): Promise<number> {
   if (urls.length === 0) {
     console.warn('[WARN] No valid URLs to open.');
     return 0;
   }
 
+  const tracer = tracerOverride ?? trace.getTracer('pwopen');
   let browser: Browser | null = null;
   let context: BrowserContext | null = null;
   let closing = false;
@@ -167,10 +179,9 @@ export async function openUrls(urls: string[], options: RuntimeOptions): Promise
           return;
         }
         exitRequested = true;
+        process.exitCode = signal === 'SIGINT' ? 130 : 143;
         void (async () => {
           await closeResources(signal);
-          const exitCode = signal === 'SIGINT' ? 130 : 143;
-          process.exit(exitCode);
         })();
       };
       signalHandlers.set(signal, handler);
@@ -188,33 +199,56 @@ export async function openUrls(urls: string[], options: RuntimeOptions): Promise
   registerSignalHandlers();
 
   try {
-    browser = await chromium.launch({
-      headless: !options.headed,
-      chromiumSandbox: options.sandbox,
-    });
+    await withSpan(tracer, 'browser.start', async (span) => {
+      span.setAttribute('pwopen.headed', options.headed);
+      span.setAttribute('pwopen.sandbox', options.sandbox);
+      browser = await chromium.launch({
+        headless: !options.headed,
+        chromiumSandbox: options.sandbox,
+      });
 
-    context = await browser.newContext({
-      viewport: { width: config.viewportWidth, height: config.viewportHeight },
-      userAgent: config.userAgent,
+      context = await browser.newContext({
+        viewport: { width: config.viewportWidth, height: config.viewportHeight },
+        userAgent: config.userAgent,
+      });
     });
+    if (!browser || !context) {
+      throw new Error('Browser initialization failed.');
+    }
 
     for (const url of urls) {
       if (exitRequested) {
         break;
       }
 
-      const page = await context.newPage();
+      if (!context) {
+        throw new Error('Browser context is not initialized');
+      }
+      const page = await (context as BrowserContext).newPage();
       try {
-        await navigateWithRetries(page, url);
-        if (options.screenshot) {
-          await waitForRenderSettled(page);
-          const screenshot = await page.screenshot({
-            type: 'png',
-            fullPage: options.fullPage,
-            scale: 'css',
+        await withSpan(tracer, 'page.process', async (span) => {
+          setUrlAttributes(span, url);
+          await withSpan(tracer, 'page.navigate', async (navSpan) => {
+            setUrlAttributes(navSpan, url);
+            await navigateWithRetries(page, url);
           });
-          await renderSixel(screenshot);
-        }
+          if (options.screenshot) {
+            await withSpan(tracer, 'page.render_wait', async () => {
+              await waitForRenderSettled(page);
+            });
+            const screenshot = await withSpan(tracer, 'page.screenshot', async (shotSpan) => {
+              shotSpan.setAttribute('pwopen.full_page', options.fullPage);
+              return page.screenshot({
+                type: 'png',
+                fullPage: options.fullPage,
+                scale: 'css',
+              });
+            });
+            await withSpan(tracer, 'sixel.convert', async () => {
+              await renderSixel(screenshot);
+            });
+          }
+        });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         console.warn(`[WARN] Failed to open ${url}: ${message}`);
