@@ -67,15 +67,18 @@ const recordTimingAttributes = (span: Span, timing: RequestTiming): void => {
   }
 };
 
-const buildRedirectChain = (response: Response): Request[] => {
+const buildRedirectChainFromRequest = (request: Request): Request[] => {
   const chain: Request[] = [];
-  let current: Request | null = response.request();
+  let current: Request | null = request;
   while (current) {
     chain.unshift(current);
     current = current.redirectedFrom();
   }
   return chain;
 };
+
+const buildRedirectChain = (response: Response): Request[] =>
+  buildRedirectChainFromRequest(response.request());
 
 const recordFinalNavigationAttributes = (
   span: Span,
@@ -157,22 +160,91 @@ const recordNavigationTiming = async (
   await recordRedirectSpans(tracer, chain);
 };
 
+const recordNavigationTimingFromRequest = async (
+  span: Span,
+  finalRequest: Request,
+  tracer: Tracer,
+): Promise<void> => {
+  const chain = buildRedirectChainFromRequest(finalRequest);
+  if (chain.length === 0) {
+    return;
+  }
+
+  const resolvedFinalRequest = chain[chain.length - 1];
+  const finalResponse = await resolvedFinalRequest.response();
+  recordFinalNavigationAttributes(span, resolvedFinalRequest, finalResponse);
+
+  if (chain.length === 1) {
+    recordTimingAttributes(span, resolvedFinalRequest.timing());
+    return;
+  }
+
+  span.setAttribute('pwopen.redirect.count', chain.length - 1);
+  await recordRedirectSpans(tracer, chain);
+};
+
+const isTimeoutError = (error: unknown): boolean =>
+  error instanceof Error && error.name === 'TimeoutError';
+
+const recordNavigationFailure = (span: Span, page: Page, error: unknown): void => {
+  span.setAttribute('pwopen.navigation.failed', true);
+  if (isTimeoutError(error)) {
+    span.setAttribute('pwopen.navigation.timed_out', true);
+  }
+
+  try {
+    const currentUrl = page.url();
+    if (currentUrl) {
+      span.setAttribute('pwopen.url.current', currentUrl);
+    }
+  } catch {
+    // Ignore failures when collecting best-effort metadata.
+  }
+};
+
+const isMainFrameNavigationRequest = (page: Page, request: Request): boolean =>
+  request.isNavigationRequest() && request.frame() === page.mainFrame();
+
 async function navigateWithRetries(page: Page, url: string, tracer: Tracer): Promise<void> {
   const maxAttempts = Math.max(0, config.navigationRetries);
 
   for (let attempt = 0; attempt <= maxAttempts; attempt += 1) {
+    let lastNavigationRequest: Request | null = null;
+    const onRequest = (request: Request) => {
+      if (isMainFrameNavigationRequest(page, request)) {
+        lastNavigationRequest = request;
+      }
+    };
+    page.on('request', onRequest);
+
     try {
       await withSpan(tracer, 'page.navigate', async (span) => {
         span.setAttribute('pwopen.navigation.attempt', attempt);
+        span.setAttribute('pwopen.timeout_ms', config.timeoutMs);
+        span.setAttribute('pwopen.navigation.wait_until', 'load');
         setUrlAttributes(span, url);
 
-        const response = await page.goto(url, { waitUntil: 'load', timeout: config.timeoutMs });
-        if (response) {
-          try {
-            await recordNavigationTiming(span, response, tracer);
-          } catch (error) {
-            console.warn(`[WARN] Failed to record navigation timing: ${String(error)}`);
+        try {
+          const response = await page.goto(url, { waitUntil: 'load', timeout: config.timeoutMs });
+          if (response) {
+            try {
+              await recordNavigationTiming(span, response, tracer);
+            } catch (error) {
+              console.warn(`[WARN] Failed to record navigation timing: ${String(error)}`);
+            }
           }
+        } catch (error) {
+          recordNavigationFailure(span, page, error);
+          if (lastNavigationRequest) {
+            try {
+              await recordNavigationTimingFromRequest(span, lastNavigationRequest, tracer);
+            } catch (timingError) {
+              console.warn(
+                `[WARN] Failed to record navigation timing after error: ${String(timingError)}`,
+              );
+            }
+          }
+          throw error;
         }
       });
 
@@ -182,6 +254,8 @@ async function navigateWithRetries(page: Page, url: string, tracer: Tracer): Pro
         throw error;
       }
       console.warn(`[WARN] Navigation failed, retrying (${attempt + 1}/${maxAttempts}): ${url}`);
+    } finally {
+      page.off('request', onRequest);
     }
   }
 }

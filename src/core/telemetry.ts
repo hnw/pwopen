@@ -78,7 +78,21 @@ export function initTelemetry(): Telemetry {
   return { tracer, shutdown, enabled: true };
 }
 
+const recordErrorAttributes = (span: Span, error: unknown): void => {
+  if (error instanceof Error) {
+    const type = error.name || 'Error';
+    span.setAttribute('exception.type', type);
+    span.setAttribute('exception.message', error.message);
+    return;
+  }
+
+  const message = String(error);
+  span.setAttribute('exception.type', typeof error);
+  span.setAttribute('exception.message', message);
+};
+
 function recordSpanError(span: Span, error: unknown): void {
+  recordErrorAttributes(span, error);
   if (error instanceof Error) {
     span.recordException(error);
     span.setStatus({ code: SpanStatusCode.ERROR, message: error.message });
