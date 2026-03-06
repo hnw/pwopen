@@ -1,5 +1,12 @@
 import { type Span, trace, type Tracer } from '@opentelemetry/api';
-import { type Browser, type BrowserContext, chromium, type Frame, type Page } from 'playwright';
+import {
+  type Browser,
+  type BrowserContext,
+  chromium,
+  type Frame,
+  type Page,
+  type Response,
+} from 'playwright';
 
 import type { RuntimeOptions } from '../types.js';
 import { config } from './config.js';
@@ -11,12 +18,81 @@ const setUrlAttributes = (span: Span, url: string): void => {
   span.setAttribute('pwopen.url.full', url);
 };
 
-async function navigateWithRetries(page: Page, url: string): Promise<void> {
+async function navigateWithRetries(page: Page, url: string, tracer: Tracer): Promise<void> {
   const maxAttempts = Math.max(0, config.navigationRetries);
 
   for (let attempt = 0; attempt <= maxAttempts; attempt += 1) {
     try {
-      await page.goto(url, { waitUntil: 'load', timeout: config.timeoutMs });
+      await withSpan(tracer, 'page.navigate', async (span) => {
+        span.setAttribute('pwopen.navigation.attempt', attempt);
+        setUrlAttributes(span, url);
+
+        let timingRecorded = false;
+        const recordTiming = (response: Response): void => {
+          if (timingRecorded) {
+            return;
+          }
+
+          const request = response.request();
+          if (request.resourceType() !== 'document') {
+            return;
+          }
+          if (!request.isNavigationRequest()) {
+            return;
+          }
+          if (response.frame() !== page.mainFrame()) {
+            return;
+          }
+          if (request.redirectedTo()) {
+            return;
+          }
+
+          const timing = request.timing();
+          const durationMs = (start: number, end: number): number | null => {
+            if (start < 0 || end < 0 || end < start) {
+              return null;
+            }
+            return end - start;
+          };
+
+          const dnsMs = durationMs(timing.domainLookupStart, timing.domainLookupEnd);
+          if (dnsMs !== null) {
+            span.setAttribute('http.timing.dns_ms', dnsMs);
+          }
+
+          const tcpMs = durationMs(timing.connectStart, timing.connectEnd);
+          if (tcpMs !== null) {
+            span.setAttribute('http.timing.tcp_ms', tcpMs);
+          }
+
+          const ttfbMs = durationMs(timing.requestStart, timing.responseStart);
+          if (ttfbMs !== null) {
+            span.setAttribute('http.timing.ttfb_ms', ttfbMs);
+          }
+
+          span.setAttribute('http.response.status', response.status());
+          timingRecorded = true;
+        };
+
+        const responseHandler = (response: Response) => {
+          try {
+            recordTiming(response);
+          } catch (error) {
+            console.warn(`[WARN] Failed to record navigation timing: ${String(error)}`);
+          }
+        };
+
+        page.on('response', responseHandler);
+        try {
+          const response = await page.goto(url, { waitUntil: 'load', timeout: config.timeoutMs });
+          if (response) {
+            recordTiming(response);
+          }
+        } finally {
+          page.off('response', responseHandler);
+        }
+      });
+
       return;
     } catch (error) {
       if (attempt >= maxAttempts) {
@@ -228,10 +304,7 @@ export async function openUrls(
       try {
         await withSpan(tracer, 'page.process', async (span) => {
           setUrlAttributes(span, url);
-          await withSpan(tracer, 'page.navigate', async (navSpan) => {
-            setUrlAttributes(navSpan, url);
-            await navigateWithRetries(page, url);
-          });
+          await navigateWithRetries(page, url, tracer);
           if (options.screenshot) {
             await withSpan(tracer, 'page.render_wait', async () => {
               await waitForRenderSettled(page);
