@@ -221,36 +221,47 @@ async function waitForMainFrameIdle(
   });
 }
 
-async function waitForRenderSettled(page: Page): Promise<void> {
+async function waitForRenderSettled(page: Page, tracer: Tracer): Promise<void> {
   const settleTimeout = Math.min(5000, config.timeoutMs);
 
   let sawNavigation = false;
   try {
-    sawNavigation = await waitForMainFrameIdle(page, 200, settleTimeout);
+    sawNavigation = await withSpan(tracer, 'render.wait.main_frame_idle', async (span) => {
+      span.setAttribute('pwopen.idle_ms', 200);
+      span.setAttribute('pwopen.settle_timeout_ms', settleTimeout);
+      const result = await waitForMainFrameIdle(page, 200, settleTimeout);
+      span.setAttribute('pwopen.saw_navigation', result);
+      return result;
+    });
   } catch (error) {
     console.warn(`[WARN] Navigation idle wait failed: ${String(error)}`);
   }
 
   if (sawNavigation) {
     try {
-      await page.waitForLoadState('load', { timeout: settleTimeout });
+      await withSpan(tracer, 'render.wait.load_state', async (span) => {
+        span.setAttribute('pwopen.timeout_ms', settleTimeout);
+        await page.waitForLoadState('load', { timeout: settleTimeout });
+      });
     } catch (error) {
       console.warn(`[WARN] Page did not reach load state: ${String(error)}`);
     }
   }
 
   try {
-    await page.evaluate(async () => {
-      const fontsReady = (document as { fonts?: { ready?: Promise<unknown> } }).fonts?.ready;
-      if (fontsReady) {
-        await fontsReady;
-      }
+    await withSpan(tracer, 'render.wait.fonts_raf', async () => {
+      await page.evaluate(async () => {
+        const fontsReady = (document as { fonts?: { ready?: Promise<unknown> } }).fonts?.ready;
+        if (fontsReady) {
+          await fontsReady;
+        }
 
-      await new Promise<void>((resolve) => {
-        requestAnimationFrame(() => resolve());
-      });
-      await new Promise<void>((resolve) => {
-        requestAnimationFrame(() => resolve());
+        await new Promise<void>((resolve) => {
+          requestAnimationFrame(() => resolve());
+        });
+        await new Promise<void>((resolve) => {
+          requestAnimationFrame(() => resolve());
+        });
       });
     });
   } catch (error) {
@@ -258,7 +269,10 @@ async function waitForRenderSettled(page: Page): Promise<void> {
   }
 
   if (config.renderWaitMs > 0) {
-    await page.waitForTimeout(config.renderWaitMs);
+    await withSpan(tracer, 'render.wait.post_delay', async (span) => {
+      span.setAttribute('pwopen.render_wait_ms', config.renderWaitMs);
+      await page.waitForTimeout(config.renderWaitMs);
+    });
   }
 }
 
@@ -368,10 +382,10 @@ export async function openUrls(
         await withSpan(tracer, 'page.process', async (span) => {
           setUrlAttributes(span, url);
           await navigateWithRetries(page, url, tracer);
+          await withSpan(tracer, 'page.render_wait', async () => {
+            await waitForRenderSettled(page, tracer);
+          });
           if (options.screenshot) {
-            await withSpan(tracer, 'page.render_wait', async () => {
-              await waitForRenderSettled(page);
-            });
             const screenshot = await withSpan(tracer, 'page.screenshot', async (shotSpan) => {
               shotSpan.setAttribute('pwopen.full_page', options.fullPage);
               return page.screenshot({
