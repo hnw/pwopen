@@ -37,6 +37,26 @@ const recordTimingAttributes = (span: Span, timing: RequestTiming): void => {
   }
 
   const tcpMs = durationMs(timing.connectStart, timing.connectEnd);
+  const canSplitTls =
+    timing.connectStart >= 0 &&
+    timing.connectEnd >= timing.connectStart &&
+    timing.secureConnectionStart >= timing.connectStart &&
+    timing.secureConnectionStart <= timing.connectEnd;
+
+  if (canSplitTls) {
+    const tcpHandshakeMs = durationMs(timing.connectStart, timing.secureConnectionStart);
+    if (tcpHandshakeMs !== null) {
+      span.setAttribute('http.timing.tcp_handshake_ms', tcpHandshakeMs);
+    }
+
+    const tlsNegotiationMs = durationMs(timing.secureConnectionStart, timing.connectEnd);
+    if (tlsNegotiationMs !== null) {
+      span.setAttribute('http.timing.tls_negotiation_ms', tlsNegotiationMs);
+    }
+  } else if (tcpMs !== null) {
+    span.setAttribute('http.timing.tcp_handshake_ms', tcpMs);
+  }
+
   if (tcpMs !== null) {
     span.setAttribute('http.timing.tcp_ms', tcpMs);
   }
