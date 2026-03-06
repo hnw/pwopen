@@ -5,6 +5,7 @@ import {
   chromium,
   type Frame,
   type Page,
+  type Request,
   type Response,
 } from 'playwright';
 
@@ -18,6 +19,124 @@ const setUrlAttributes = (span: Span, url: string): void => {
   span.setAttribute('pwopen.url.full', url);
 };
 
+type RequestTiming = ReturnType<Request['timing']>;
+
+const isValidEpochMs = (value: number): boolean => Number.isFinite(value) && value > 0;
+
+const durationMs = (start: number, end: number): number | null => {
+  if (start < 0 || end < 0 || end < start) {
+    return null;
+  }
+  return end - start;
+};
+
+const recordTimingAttributes = (span: Span, timing: RequestTiming): void => {
+  const dnsMs = durationMs(timing.domainLookupStart, timing.domainLookupEnd);
+  if (dnsMs !== null) {
+    span.setAttribute('http.timing.dns_ms', dnsMs);
+  }
+
+  const tcpMs = durationMs(timing.connectStart, timing.connectEnd);
+  if (tcpMs !== null) {
+    span.setAttribute('http.timing.tcp_ms', tcpMs);
+  }
+
+  const ttfbMs = durationMs(timing.requestStart, timing.responseStart);
+  if (ttfbMs !== null) {
+    span.setAttribute('http.timing.ttfb_ms', ttfbMs);
+  }
+};
+
+const buildRedirectChain = (response: Response): Request[] => {
+  const chain: Request[] = [];
+  let current: Request | null = response.request();
+  while (current) {
+    chain.unshift(current);
+    current = current.redirectedFrom();
+  }
+  return chain;
+};
+
+const recordFinalNavigationAttributes = (
+  span: Span,
+  finalRequest: Request,
+  finalResponse: Response | null,
+): void => {
+  span.setAttribute('pwopen.url.final', finalRequest.url());
+  if (finalResponse) {
+    span.setAttribute('http.response.status', finalResponse.status());
+  }
+};
+
+const startHopSpan = (tracer: Tracer, name: string, timing: RequestTiming): Span => {
+  const hopStartTime = isValidEpochMs(timing.startTime) ? timing.startTime : undefined;
+  return hopStartTime
+    ? tracer.startSpan(name, { startTime: hopStartTime })
+    : tracer.startSpan(name);
+};
+
+const endHopSpan = (span: Span, timing: RequestTiming): void => {
+  const hopStartTime = isValidEpochMs(timing.startTime) ? timing.startTime : undefined;
+  const hopEndTime =
+    hopStartTime !== undefined && timing.responseEnd >= 0
+      ? hopStartTime + timing.responseEnd
+      : undefined;
+  if (hopEndTime !== undefined && hopEndTime >= (hopStartTime ?? 0)) {
+    span.end(hopEndTime);
+  } else {
+    span.end();
+  }
+};
+
+const hopSpanName = (isFinal: boolean, response: Response | null): string => {
+  if (isFinal) {
+    return 'page.navigate.final';
+  }
+  const status = response?.status();
+  return `page.navigate.redirect_${status ?? '30x'}`;
+};
+
+const recordRedirectSpans = async (tracer: Tracer, chain: Request[]): Promise<void> => {
+  for (let index = 0; index < chain.length; index += 1) {
+    const hopRequest = chain[index];
+    const hopResponse = await hopRequest.response();
+    const hopTiming = hopRequest.timing();
+    const isFinal = index === chain.length - 1;
+    const hopName = hopSpanName(isFinal, hopResponse);
+    const hopSpan = startHopSpan(tracer, hopName, hopTiming);
+
+    setUrlAttributes(hopSpan, hopRequest.url());
+    if (hopResponse) {
+      hopSpan.setAttribute('http.response.status', hopResponse.status());
+    }
+    recordTimingAttributes(hopSpan, hopTiming);
+    endHopSpan(hopSpan, hopTiming);
+  }
+};
+
+const recordNavigationTiming = async (
+  span: Span,
+  response: Response,
+  tracer: Tracer,
+): Promise<void> => {
+  const chain = buildRedirectChain(response);
+  if (chain.length === 0) {
+    return;
+  }
+
+  const finalRequest = chain[chain.length - 1];
+  const finalResponse = (await finalRequest.response()) ?? response;
+  recordFinalNavigationAttributes(span, finalRequest, finalResponse);
+
+  if (chain.length === 1) {
+    recordTimingAttributes(span, finalRequest.timing());
+    return;
+  }
+
+  span.setAttribute('pwopen.redirect.count', chain.length - 1);
+  await recordRedirectSpans(tracer, chain);
+};
+
 async function navigateWithRetries(page: Page, url: string, tracer: Tracer): Promise<void> {
   const maxAttempts = Math.max(0, config.navigationRetries);
 
@@ -27,69 +146,13 @@ async function navigateWithRetries(page: Page, url: string, tracer: Tracer): Pro
         span.setAttribute('pwopen.navigation.attempt', attempt);
         setUrlAttributes(span, url);
 
-        let timingRecorded = false;
-        const recordTiming = (response: Response): void => {
-          if (timingRecorded) {
-            return;
-          }
-
-          const request = response.request();
-          if (request.resourceType() !== 'document') {
-            return;
-          }
-          if (!request.isNavigationRequest()) {
-            return;
-          }
-          if (response.frame() !== page.mainFrame()) {
-            return;
-          }
-          if (request.redirectedTo()) {
-            return;
-          }
-
-          const timing = request.timing();
-          const durationMs = (start: number, end: number): number | null => {
-            if (start < 0 || end < 0 || end < start) {
-              return null;
-            }
-            return end - start;
-          };
-
-          const dnsMs = durationMs(timing.domainLookupStart, timing.domainLookupEnd);
-          if (dnsMs !== null) {
-            span.setAttribute('http.timing.dns_ms', dnsMs);
-          }
-
-          const tcpMs = durationMs(timing.connectStart, timing.connectEnd);
-          if (tcpMs !== null) {
-            span.setAttribute('http.timing.tcp_ms', tcpMs);
-          }
-
-          const ttfbMs = durationMs(timing.requestStart, timing.responseStart);
-          if (ttfbMs !== null) {
-            span.setAttribute('http.timing.ttfb_ms', ttfbMs);
-          }
-
-          span.setAttribute('http.response.status', response.status());
-          timingRecorded = true;
-        };
-
-        const responseHandler = (response: Response) => {
+        const response = await page.goto(url, { waitUntil: 'load', timeout: config.timeoutMs });
+        if (response) {
           try {
-            recordTiming(response);
+            await recordNavigationTiming(span, response, tracer);
           } catch (error) {
             console.warn(`[WARN] Failed to record navigation timing: ${String(error)}`);
           }
-        };
-
-        page.on('response', responseHandler);
-        try {
-          const response = await page.goto(url, { waitUntil: 'load', timeout: config.timeoutMs });
-          if (response) {
-            recordTiming(response);
-          }
-        } finally {
-          page.off('response', responseHandler);
         }
       });
 
