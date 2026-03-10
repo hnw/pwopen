@@ -62,13 +62,13 @@ printf 'https://example.com\n' | docker run --rm -i --init --ipc=host \
 
 ```bash
 # Install dependencies
-npm ci
+pnpm install
 
 # Install Playwright browsers (and system dependencies)
-npx playwright install --with-deps chromium
+pnpm exec playwright install --with-deps chromium
 
 # Build the project
-npm run build
+pnpm run build
 
 # Run via CLI
 node ./dist/main.js --screenshot https://google.com

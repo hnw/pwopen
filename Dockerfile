@@ -16,20 +16,22 @@ RUN groupadd -g ${GID} app \
 
 FROM base AS deps
 ENV NODE_ENV=development
-COPY package.json package-lock.json ./
-RUN npm ci
+RUN corepack enable pnpm
+COPY package.json pnpm-lock.yaml ./
+RUN pnpm install --frozen-lockfile
 
 FROM base AS build
 COPY --from=deps /app/node_modules /app/node_modules
-COPY package.json ./
+COPY package.json pnpm-lock.yaml ./
 COPY tsconfig*.json playwright.config.ts ./
 COPY src ./src
-RUN npm run build
+RUN corepack enable pnpm && pnpm run build
 
 FROM base AS runtime
-COPY package.json package-lock.json ./
-RUN npm ci --omit=dev \
-    && npm cache clean --force
+RUN corepack enable pnpm
+COPY package.json pnpm-lock.yaml ./
+RUN pnpm install --prod --frozen-lockfile \
+    && pnpm store prune
 COPY --from=build /app/dist /app/dist
 RUN chown -R app:app /app
 USER app
